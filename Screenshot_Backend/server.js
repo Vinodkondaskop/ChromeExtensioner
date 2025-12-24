@@ -1,5 +1,6 @@
 //server.js 
-
+require("dotenv").config();
+console.log("ENV LOADED:", !!process.env.GEMINI_API_KEY); 
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -17,7 +18,7 @@ let textModel = null;
 let visionModel = null;
 
 if (GEMINI_API_KEY) {
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);;
   textModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   visionModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   console.log('Gemini AI models initialized successfully');

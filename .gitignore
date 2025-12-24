@@ -1,5 +1,13 @@
+# root
 node_modules/
 .env
-dist/
-.DS_Store
 
+# backend
+Screenshot_Backend\node_modules
+Screenshot_Backend\.env
+
+# build
+dist/
+
+# OS
+.DS_Store
