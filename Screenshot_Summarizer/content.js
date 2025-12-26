@@ -1,4 +1,3 @@
-
 (() => {
   'use strict';
 
@@ -54,58 +53,147 @@
       position: fixed;
       top: 80px;
       right: 20px;
-      width: 270px;
+      width: 320px;
+      max-height: 90vh;
+      overflow-y: auto;
       background: #fff;
       border-radius: 12px;
       box-shadow: 0 20px 50px rgba(0,0,0,.3);
       font-family: system-ui, sans-serif;
       z-index: 2147483647;
-      overflow: hidden;
       animation: slideIn .35s ease;
     }
 
     .va-header {
-      padding: 10px 12px;
+      padding: 12px 14px;
       background: linear-gradient(135deg,#6366f1,#8b5cf6);
       color: #fff;
       font-weight: 600;
       display: flex;
       justify-content: space-between;
+      align-items: center;
       cursor: move;
       user-select: none;
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
 
     .va-close {
       background: none;
       border: none;
       color: #fff;
-      font-size: 16px;
+      font-size: 18px;
       cursor: pointer;
       opacity: .85;
+      padding: 4px;
     }
     .va-close:hover { opacity: 1; }
 
     .va-body {
-      padding: 12px;
+      padding: 14px;
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.6;
     }
 
     .va-status {
       color: #2563eb;
       font-weight: 500;
+      padding: 8px 0;
     }
 
     .va-preview {
       width: 100%;
       border-radius: 8px;
-      margin: 8px 0;
+      margin: 10px 0;
       display: none;
       animation: fadeUp .3s ease;
+      border: 1px solid #e5e7eb;
     }
 
     .va-result {
       animation: fadeUp .35s ease;
+    }
+
+    .va-section {
+      margin-bottom: 16px;
+      border-radius: 8px;
+      background: #f9fafb;
+      overflow: hidden;
+    }
+
+    .va-section-header {
+      padding: 10px 12px;
+      background: #f3f4f6;
+      font-weight: 600;
+      font-size: 12px;
+      color: #374151;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .va-section-header:hover {
+      background: #e5e7eb;
+    }
+
+    .va-section-toggle {
+      font-size: 10px;
+      opacity: 0.7;
+      transition: transform 0.2s;
+    }
+
+    .va-section-toggle.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    .va-section-content {
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      max-height: 500px;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .va-section-content.collapsed {
+      max-height: 0;
+      padding: 0 12px;
+    }
+
+    .va-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #dbeafe;
+      color: #1e40af;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .va-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .va-list-item {
+      padding: 6px 0;
+      padding-left: 16px;
+      position: relative;
+      color: #374151;
+    }
+
+    .va-list-item:before {
+      content: "→";
+      position: absolute;
+      left: 0;
+      color: #6366f1;
+      font-weight: bold;
     }
 
     .va-scan {
@@ -124,6 +212,23 @@
 
     .scanning {
       animation: glow 1.4s infinite;
+    }
+
+    .va-context {
+      padding: 10px 12px;
+      background: #eff6ff;
+      border-left: 3px solid #3b82f6;
+      border-radius: 6px;
+      color: #1e40af;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+
+    .va-empty {
+      color: #9ca3af;
+      font-style: italic;
+      font-size: 11px;
     }
   `;
   document.head.appendChild(style);
@@ -249,16 +354,91 @@
     img.style.display = 'block';
   }
 
-  function showResult(text) {
+  function renderStructuredAnalysis(data) {
+    // Handle both structured and text responses
+    let analysis;
+    
+    if (typeof data === 'string') {
+      // Fallback: treat as plain text
+      return `<div class="va-context">${data}</div>`;
+    }
+
+    if (typeof data === 'object') {
+      analysis = data;
+    } else {
+      try {
+        analysis = JSON.parse(data);
+      } catch {
+        return `<div class="va-context">${data}</div>`;
+      }
+    }
+
+    let html = '';
+
+    // Content Type Badge
+    if (analysis.contentType) {
+      html += `<div class="va-badge">📋 ${analysis.contentType}</div>`;
+    }
+
+    // Context Box
+    if (analysis.context) {
+      html += `<div class="va-context">${analysis.context}</div>`;
+    }
+
+    // Key Insights Section
+    if (analysis.keyInsights && analysis.keyInsights.length > 0) {
+      html += createSection('🎯 Key Insights', analysis.keyInsights, 'insights', false);
+    }
+
+    // Important Details Section
+    if (analysis.importantDetails && analysis.importantDetails.length > 0) {
+      html += createSection('📌 Important Details', analysis.importantDetails, 'details', true);
+    }
+
+    // Technical Elements Section
+    if (analysis.technicalElements && analysis.technicalElements.length > 0) {
+      html += createSection('⚙️ Technical Elements', analysis.technicalElements, 'technical', true);
+    }
+
+    return html;
+  }
+
+  function createSection(title, items, id, collapsed = false) {
+    const collapsedClass = collapsed ? 'collapsed' : '';
+    const toggleClass = collapsed ? 'collapsed' : '';
+    
+    const listItems = items
+      .filter(item => item && item.trim())
+      .map(item => `<li class="va-list-item">${item}</li>`)
+      .join('');
+
+    if (!listItems) {
+      return '';
+    }
+
+    return `
+      <div class="va-section">
+        <div class="va-section-header" onclick="this.nextElementSibling.classList.toggle('collapsed'); this.querySelector('.va-section-toggle').classList.toggle('collapsed');">
+          ${title}
+          <span class="va-section-toggle ${toggleClass}">▼</span>
+        </div>
+        <div class="va-section-content ${collapsedClass}">
+          <ul class="va-list">${listItems}</ul>
+        </div>
+      </div>
+    `;
+  }
+
+  function showResult(summary) {
     stopScan();
-    widget.querySelector('.va-result').innerHTML =
-      `<strong>Analysis</strong><br><br>${text}`;
+    const resultDiv = widget.querySelector('.va-result');
+    resultDiv.innerHTML = renderStructuredAnalysis(summary);
   }
 
   function showError(err) {
     stopScan();
     widget.querySelector('.va-result').innerHTML =
-      `<span style="color:#b91c1c">${err}</span>`;
+      `<span style="color:#b91c1c">⚠️ ${err}</span>`;
   }
 
   /* ---------------- CLEANUP ---------------- */
@@ -294,7 +474,3 @@
 
   createUI();
 })();
-
-// content.js — UFO Visual Analyzer (final clean version)
-
-

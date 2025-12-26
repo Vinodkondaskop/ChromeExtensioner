@@ -1,6 +1,5 @@
 //server.js 
-require("dotenv").config();
-console.log("ENV LOADED:", !!process.env.GEMINI_API_KEY); 
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -11,24 +10,36 @@ const app = express();
 const PORT = 3000;
 
 // ⚠️ REPLACE WITH YOUR ACTUAL GEMINI API KEY
-const GEMINI_API_KEY = 'AIzaSyDkOjQn2H-CIOP-uK3mp2a8Z11X9SnSirg';
+const GEMINI_API_KEY = 'AIzaSyCsOO3I98lRh57QSJjTjO8iijv1_HEcxV4';
 
 // Initialize Gemini AI with vision model
 let textModel = null;
 let visionModel = null;
 
 if (GEMINI_API_KEY) {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);;
-  textModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-  visionModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-  console.log('Gemini AI models initialized successfully');
-} else {
-  console.error('Gemini API Key is missing!');
+  try {
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    textModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    visionModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    console.log('✅ Gemini AI models initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize Gemini AI:', error);
+  }
 }
 
-// Middleware
-app.use(cors());
+// Middleware with detailed CORS
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type']
+}));
 app.use(express.json());
+
+// Request logging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
 
 // Configure multer
 const upload = multer({
@@ -40,55 +51,81 @@ const upload = multer({
 app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running',
-    ai: textModel ? 'gemini-2.5-flash' : 'Fallback (No API Key)',
-    endpoints: { summarize: 'POST /summarize' }
+    ai: textModel ? 'Google Gemini 2.0 Flash' : 'Fallback (No API Key)',
+    visionEnabled: !!visionModel,
+    textEnabled: !!textModel,
+    timestamp: new Date().toISOString(),
+    endpoints: { 
+      summarize: 'POST /summarize',
+      test: 'GET /test'
+    }
+  });
+});
+
+// Test endpoint
+app.get('/test', (req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Server is responding',
+    models: {
+      vision: !!visionModel,
+      text: !!textModel
+    }
   });
 });
 
 // Main endpoint with vision analysis
 app.post('/summarize', upload.single('image'), async (req, res) => {
   try {
-    console.log('Received screenshot request');
+    console.log('📸 Received screenshot request');
+    console.log('Request headers:', req.headers);
     
     if (!req.file) {
+      console.error('❌ No image file in request');
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    console.log('Image received, size:', req.file.size, 'bytes');
+    console.log('✅ Image received, size:', req.file.size, 'bytes');
+    console.log('Image type:', req.file.mimetype);
 
     // Try vision-based analysis first (more accurate)
     if (visionModel) {
-      console.log('Using Gemini Vision for direct image analysis...');
+      console.log('🔍 Using Gemini Vision for direct image analysis...');
       try {
         const analysis = await analyzeImageWithVision(req.file.buffer, req.file.mimetype);
+        console.log('✅ Vision analysis completed successfully');
         
         return res.json({
           success: true,
-          summary: analysis,
+          summary: analysis, // This is now a structured object
           method: 'vision',
           originalTextLength: 0
         });
       } catch (visionError) {
-        console.error('Vision analysis failed, falling back to OCR:', visionError.message);
+        console.error('❌ Vision analysis failed:', visionError.message);
+        console.error('Full error:', visionError);
       }
+    } else {
+      console.warn('⚠️ Vision model not available');
     }
 
     // Fallback to OCR + text analysis
-    console.log('Starting OCR...');
+    console.log('📝 Starting OCR fallback...');
     const extractedText = await performOCR(req.file.buffer);
     
     if (!extractedText || extractedText.trim().length === 0) {
+      console.error('❌ No text extracted from image');
       return res.status(400).json({ 
         error: 'No text found in image',
         summary: 'No readable text was detected in the screenshot.' 
       });
     }
 
-    console.log('OCR completed, extracted text length:', extractedText.length);
-    console.log('Starting analysis...');
+    console.log('✅ OCR completed, extracted text length:', extractedText.length);
+    console.log('🤖 Starting text analysis...');
     
     const analysis = await analyzeWithGemini(extractedText);
-    console.log('Analysis completed');
+    console.log('✅ Analysis completed');
 
     res.json({
       success: true,
@@ -99,15 +136,17 @@ app.post('/summarize', upload.single('image'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error processing screenshot:', error);
+    console.error('💥 Error processing screenshot:', error);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({ 
       error: 'Failed to process screenshot',
-      message: error.message 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// Vision-based analysis with custom prompt
+// Vision-based analysis with structured JSON output
 async function analyzeImageWithVision(imageBuffer, mimeType) {
   try {
     const imagePart = {
@@ -117,33 +156,49 @@ async function analyzeImageWithVision(imageBuffer, mimeType) {
       }
     };
 
-    const prompt = `You are an AI assistant specialized in analyzing screenshots and images. Your task is to provide detailed, structured insights about the content shown.
+    const prompt = `You are an AI assistant specialized in analyzing screenshots and images. Provide a structured, concise analysis.
 
-Analyze this screenshot/image and provide:
+Analyze this screenshot/image and respond in this EXACT JSON format:
 
-1. **Content Type & Context**: Identify what type of content this is (webpage, app interface, document, code, chat, social media, etc.) and its general purpose or context.
+{
+  "contentType": "Brief description (e.g., 'API Keys Dashboard', 'Code Editor', 'Article Page')",
+  "keyInsights": [
+    "First key insight in one sentence",
+    "Second key insight in one sentence",
+    "Third key insight in one sentence"
+  ],
+  "importantDetails": [
+    "Important detail 1",
+    "Important detail 2",
+    "Important detail 3"
+  ],
+  "context": "One sentence about what the user is viewing/doing",
+  "technicalElements": ["element1", "element2"] // Only if technical content like code, APIs, errors
+}
 
-2. **Main Information**: Extract and summarize the key information, main topics, or primary content visible in the image. Be specific about what's actually shown.
-
-3. **Important Details**: Highlight any notable elements such as:
-   - Specific data, numbers, or statistics
-   - Important headings or titles
-   - Key UI elements (buttons, forms, navigation)
-   - Dates, times, or temporal information
-   - User names, company names, or branding (if relevant)
-
-4. **Actionable Insights**: If applicable, provide:
-   - What action the user might be taking or viewing
-   - Any potential next steps or important information to note
-   - Context about why this screenshot might be significant
-
-5. **Technical Elements** (if relevant): Note any code snippets, technical configurations, error messages, or system information visible.
-
-Format your response in clear sections with headers. Be thorough but concise. Focus on providing genuine insight rather than just describing what's visible.`;
+Keep each insight to 1 sentence maximum. Focus on what's actually useful. Be concise and specific.`;
 
     const result = await visionModel.generateContent([prompt, imagePart]);
     const response = await result.response;
-    return response.text().trim();
+    const rawText = response.text().trim();
+    
+    // Try to parse JSON response
+    try {
+      // Remove markdown code blocks if present
+      const cleanJson = rawText.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      return parsed;
+    } catch (parseError) {
+      console.warn('Failed to parse JSON, returning raw text');
+      // Fallback: return structured format from raw text
+      return {
+        contentType: "Screenshot Analysis",
+        keyInsights: [rawText.substring(0, 200)],
+        importantDetails: [],
+        context: "Analysis completed",
+        technicalElements: []
+      };
+    }
     
   } catch (error) {
     console.error('Vision API Error:', error);
@@ -172,7 +227,7 @@ async function performOCR(imageBuffer) {
   }
 }
 
-// Enhanced text analysis with custom prompt
+// Enhanced text analysis with structured JSON output
 async function analyzeWithGemini(text) {
   try {
     if (!textModel) {
@@ -180,37 +235,50 @@ async function analyzeWithGemini(text) {
       return simpleRuleBasedSummary(text);
     }
 
-    const prompt = `You are an AI assistant specialized in analyzing text extracted from screenshots. Your task is to provide detailed, structured insights about the content.
+    const prompt = `You are an AI assistant specialized in analyzing text from screenshots. Provide a structured, concise analysis.
 
 Text extracted from screenshot:
 ${text}
 
-Analyze this text and provide:
+Respond in this EXACT JSON format:
 
-1. **Content Type & Context**: Identify what type of content this is (article, code, conversation, documentation, form data, etc.) and its general purpose.
+{
+  "contentType": "Brief description of content type (e.g., 'Documentation', 'Code Snippet', 'Chat Conversation')",
+  "keyInsights": [
+    "First key insight in one sentence",
+    "Second key insight in one sentence",
+    "Third key insight in one sentence"
+  ],
+  "importantDetails": [
+    "Important detail 1",
+    "Important detail 2",
+    "Important detail 3"
+  ],
+  "context": "One sentence about what this content is about",
+  "technicalElements": ["element1", "element2"] // Only if technical content
+}
 
-2. **Main Information**: Summarize the key information, main topics, or primary content. Be specific and extract the most important points.
-
-3. **Important Details**: Highlight:
-   - Specific data, numbers, or statistics
-   - Important names, dates, or identifiers
-   - Key technical terms or concepts
-   - Any errors, warnings, or critical information
-
-4. **Actionable Insights**: If applicable:
-   - What action the user might be taking
-   - Any important information they should note
-   - Context about why this content might be significant
-
-5. **Technical Elements** (if relevant): Note any code, commands, configurations, or technical details.
-
-Format your response in clear sections with headers. Be thorough but concise. Focus on providing genuine insight and understanding, not just repeating the text.`;
+Keep each insight to 1 sentence maximum. Be concise and specific. Extract only what's truly important.`;
 
     const result = await textModel.generateContent(prompt);
     const response = await result.response;
-    const analysis = response.text();
+    const rawText = response.text();
     
-    return analysis.trim();
+    // Try to parse JSON response
+    try {
+      const cleanJson = rawText.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      return parsed;
+    } catch (parseError) {
+      console.warn('Failed to parse JSON, returning raw text');
+      return {
+        contentType: "Text Analysis",
+        keyInsights: [rawText.substring(0, 200)],
+        importantDetails: [],
+        context: "Analysis completed",
+        technicalElements: []
+      };
+    }
     
   } catch (error) {
     console.error('Gemini API Error:', error.message);
@@ -223,33 +291,27 @@ Format your response in clear sections with headers. Be thorough but concise. Fo
 function simpleRuleBasedSummary(text) {
   const cleaned = text.replace(/\s+/g, ' ').trim();
   
-  if (cleaned.length <= 200) {
-    return `**Content Summary:**\n${cleaned}`;
-  }
-
   const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned];
-  const summary = sentences.slice(0, 4).join(' ').trim();
+  const summary = sentences.slice(0, 3).join(' ').trim();
   
-  let result = '**Content Overview:**\n';
-  
-  if (summary.length > 500) {
-    result += summary.substring(0, 497) + '...';
-  } else {
-    result += summary;
-  }
-  
-  // Try to extract key phrases
+  // Extract key terms
   const words = cleaned.toLowerCase().split(/\s+/);
-  const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for']);
+  const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'is', 'are', 'was', 'were']);
   const keyWords = words
     .filter(w => w.length > 4 && !commonWords.has(w))
     .slice(0, 5);
   
-  if (keyWords.length > 0) {
-    result += `\n\n**Key terms:** ${keyWords.join(', ')}`;
-  }
-  
-  return result || 'Analysis: ' + cleaned.substring(0, 200) + '...';
+  // Return structured format
+  return {
+    contentType: "Text Content",
+    context: cleaned.length <= 200 ? cleaned : summary,
+    keyInsights: [
+      sentences[0] || "Content extracted from screenshot",
+      sentences[1] || "Analysis in progress"
+    ].filter(Boolean),
+    importantDetails: keyWords.length > 0 ? [`Key terms: ${keyWords.join(', ')}`] : [],
+    technicalElements: []
+  };
 }
 
 // Start server
@@ -258,7 +320,7 @@ app.listen(PORT, () => {
 =================================
 Screenshot Analysis Server Running
 =================================
-AI Model: ${textModel ? 'gemini-2.5-flash' : 'Fallback (Set API Key)'}
+AI Model: ${textModel ? 'Google Gemini 2.0 Flash' : 'Fallback (Set API Key)'}
 Vision Analysis: ${visionModel ? 'Enabled' : 'Disabled'}
 Port: ${PORT}
 URL: http://localhost:${PORT}
